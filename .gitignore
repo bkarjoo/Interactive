@@ -1,5 +1,10 @@
 *.pyc
-.idea
+.idea/
+dist/
+build/
+*.spec
+setup.py
+
 
 # Windows image file caches
 Thumbs.db

@@ -7,6 +7,7 @@ from HydraQuoteManager import HydraQuoteManager
 from HydraOrderFactory import HydraOrderFactory
 import threading
 from HydraOrder import *
+from HydraPositionUpdater import HydraPositionUpdater
 from Positions import Positions
 
 
@@ -55,10 +56,12 @@ class InteractiveStrategy(object):
                     self.send_order(o)
 
                 if ui.upper() == 'PRINT OPEN ORDERS':
-                    print self.open_orders
+                    print len(self.open_orders)
+                    self.print_open_orders()
 
                 if ui.upper() == 'PRINT CLOSED ORDERS':
-                    print self.closed_orders
+                    print len(self.closed_orders)
+                    self.print_closed_orders()
 
                 if ui.upper() == 'CANCEL OPEN ORDERS':
                     for key, value in self.open_orders.iteritems():
@@ -67,6 +70,9 @@ class InteractiveStrategy(object):
                 if ui.upper() == 'QUIT' or ui.upper() =='Q':
                     print 'Breaking out of interactive.'
                     break
+
+                if ui.upper() == 'POSITIONS':
+                    print self.positions
 
             except Exception as e:
                 print 'Error in interactive:'
@@ -109,6 +115,41 @@ class InteractiveStrategy(object):
         o.statusChangeNotifier.addObserver(self.orderStatusObserver)
         self.em.send_order(o)
 
+    def move_order_to_closed_list(self, ord):
+        with self.open_orders_lock:
+            try:
+                o = self.open_orders[ord.parent_id]
+                if o != None:
+                    self.closed_orders[o.parent_id] = o
+                    del self.open_orders[ord.parent_id]
+            except KeyError:
+                pass
+
+
+    @staticmethod
+    def print_orders(ords, lock):
+        with lock:
+            i = 0
+            for key, ord in ords.iteritems():
+                print '{}. {} {} {} {} @{} exec_qty={} stat={} leaves={}\n'.format(
+                    i,
+                    ord.account,
+                    ord.symbol,
+                    ord.side,
+                    ord.quantity,
+                    ord.order_price,
+                    ord.executed_quantity,
+                    ord.status,
+                    ord.leaves_qty
+                )
+                i += 1
+
+    def print_open_orders(self):
+        InteractiveStrategy.print_orders(self.open_orders, self.open_orders_lock)
+
+    def print_closed_orders(self):
+        InteractiveStrategy.print_orders(self.closed_orders, self.closed_orders_lock)
+
     def on_ask(self, quote):
         pass
 
@@ -118,26 +159,22 @@ class InteractiveStrategy(object):
     def on_last(self, quote):
         pass
 
-    def on_order_status(self, ord):
+    def on_order_status(self, ord_msg_tuple):
         # print ord
+        ord = ord_msg_tuple[0]
+        msg = ord_msg_tuple[1]
         if ord.status == order_status_type.canceled:
-            with self.open_orders_lock:
-                o = self.open_orders[ord.parent_id]
-                if o != None:
-                    self.closed_orders[o.parent_id] = o
-                    del self.open_orders[ord.parent_id]
-        elif ord.status == order_status_type.executed:
-            # need to set up a position list
+            self.move_order_to_closed_list(ord)
+        elif ord.status == order_status_type.partial_open:
             p = self.positions.get_or_create(ord.symbol)
-            pass
-
-
-
+            HydraPositionUpdater.UpdatePosition(p, msg)
+        elif ord.status == order_status_type.executed:
+            p = self.positions.get_or_create(ord.symbol)
+            HydraPositionUpdater.UpdatePosition(p, msg)
+            self.move_order_to_closed_list(ord)
 
     def on_second(self):
         while 1:
-
-
             # on second code
             if not self.run:
                 break
