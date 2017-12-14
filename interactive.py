@@ -9,6 +9,7 @@ import threading
 from HydraOrder import *
 from HydraPositionUpdater import HydraPositionUpdater
 from Positions import Positions
+import google_sheet_dtp as gs
 
 
 class InteractiveStrategy(object):
@@ -24,6 +25,7 @@ class InteractiveStrategy(object):
         self.closed_orders = {}
         self.closed_orders_lock = threading.Lock()
         self.positions = Positions()
+        self.google_sheet = 0
 
         # ----- observers -----
         self.bidObserver = InteractiveStrategy.BidObserver(self)
@@ -47,36 +49,126 @@ class InteractiveStrategy(object):
                 if ui[:4].upper() == 'ECHO':
                     print ui[4:]
 
-                if ui[:3].upper() == 'BUY':
+                elif ui[:3].upper() == 'BUY':
                     o = self.of.buy(ui)
                     self.send_order(o)
 
-                if ui[:4].upper() == 'SELL':
+                elif ui[:4].upper() == 'SELL':
                     o = self.of.sell(ui)
                     self.send_order(o)
 
-                if ui.upper() == 'PRINT OPEN ORDERS':
+                elif ui.upper() == 'PRINT OPEN ORDERS':
                     print len(self.open_orders)
                     self.print_open_orders()
 
-                if ui.upper() == 'PRINT CLOSED ORDERS':
+                elif ui.upper() == 'PRINT CLOSED ORDERS':
                     print len(self.closed_orders)
                     self.print_closed_orders()
 
-                if ui.upper() == 'CANCEL OPEN ORDERS':
+                elif ui.upper() == 'CANCEL OPEN ORDERS':
                     for key, value in self.open_orders.iteritems():
                         self.em.cancel_order(value)
 
-                if ui.upper() == 'QUIT' or ui.upper() =='Q':
+                elif ui.upper() == 'QUIT' or ui.upper() =='Q':
                     print 'Breaking out of interactive.'
                     break
 
-                if ui.upper() == 'POSITIONS':
-                    print self.positions
+                elif ui.upper() == 'LOAD SHEET':
+                    try:
+                        self.google_sheet = gs.GoogleSheetDailyTradingProcedure()
+                        print 'wait a moment . . . '
+                        self.google_sheet.load_sheet()
+                        print 'sheet loaded'
+                    except:
+                        print 'problem loading sheet'
+
+                elif ui.upper() == 'PRINT SHEET':
+                    if self.google_sheet:
+                        for row in self.google_sheet.sheet:
+                            print row
+                    else:
+                        print 'Load sheet first. (cmd = load sheet)'
+
+                elif ui.upper()[:9] == 'PRINT ROW':
+                    if self.google_sheet:
+                        tokens = ui.split(' ')
+                        print self.google_sheet.sheet[int(tokens[2]) - 1]
+                    else:
+                        print 'Load sheet first. (cmd = load sheet)'
+
+
+                elif ui.upper() == 'POSITIONS':
+                    if self.google_sheet:
+                        print self.positions
+                    else:
+                        print 'Load sheet first. (cmd = load sheet)'
+
+
+                elif ui.upper()[:10] == 'SUBMIT ROW':
+                    self.submit_row(int(ui.split(' ')[2])-1)
+
+                elif ui.upper() == 'SUBMIT ALL':
+                    if self.google_sheet.sheet:
+                        i = -1
+                        for _ in self.google_sheet.sheet:
+                            i += 1
+                            if i < 2: continue
+                            strategy = self.google_sheet.sheet[i][0]
+                            self.submit_row(i)
+                    else:
+                        pass
+
+                else:
+                    print 'Command not understood.'
+
 
             except Exception as e:
                 print 'Error in interactive:'
                 print e
+
+    def submit_row(self, r):
+        try:
+            if self.google_sheet:
+                row = self.google_sheet.sheet[r]
+                print row
+                strategy = row[0]
+                account = row[1].upper()
+                symbol = row[2].split()[0].upper()
+                if symbol == '': return
+                if row[4] == '':
+                    print "Row doesn't have quantity. Enter quantity and reload sheet."
+                    return
+                quantity = int(row[4])
+                side = 'buy' if (row[3].upper() == 'LONG' or row[3].upper() == 'BUY') else 'sell'
+                if side == 'sell': quantity *= -1
+                type = row[6].upper()
+                if row[7] == '':
+                    price = 0
+                else:
+                    price = float(row[7][1:]) if row[7][0] == '$' else float(row[7])
+                trade_date = row[8]
+                note = row[11]
+                note2 = row[12]
+
+                print strategy, account, symbol, quantity, side, type, price, trade_date, note, note2
+                o = 0
+                if type == 'MOO':
+                    o = self.of.generate_opg_market_order(quantity, symbol, account)
+                elif type == 'LOO':
+                    o = self.of.generate_opg_limit_order(quantity, symbol, price, account)
+                elif type == 'MOC':
+                    o = self.of.generate_moc_market_order(quantity, symbol, account)
+                elif type == 'LIMIT' or type == 'LMT':
+                    o = self.of.generate_limit_order(quantity, symbol, price, account)
+                inp = raw_input('{} {} {} {} {} in {}? (y/n)'.format(side, abs(quantity), symbol, price, type, account))
+                if inp == 'y':
+                    self.send_order(o)
+                else:
+                    print 'order not submitted: {}'.format(o)
+            else:
+                print 'Load sheet first. (cmd = load sheet)'
+        except Exception as e:
+            print 'row {} failed to submit: {}'.format(r + 1, e)
 
     def stop(self):
         self.run = False
