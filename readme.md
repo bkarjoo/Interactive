@@ -1,5 +1,5 @@
 
-* Quotes:
+# Quotes:
 
 1. Use QuoteManager derived class (HydraQuoteManger)
 2. Call its start_quote_stream(symbol), which returns a Quote object. (strategy template automatically does this)
